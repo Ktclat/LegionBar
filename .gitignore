@@ -1,0 +1,15 @@
+bin/
+obj/
+dist/
+release-*/
+artifacts/
+*.user
+*.log
+diagnostics*.json
+*-verification.json
+update-*.json
+update-local.ps1
+panel-*.png
+menu-*.png
+submenu-*.png
+.vs/
