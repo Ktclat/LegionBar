@@ -9,7 +9,7 @@ try {
         dotnet restore LegionBar.csproj -r win-x64 --locked-mode -p:SelfContained=$selfContainedValue -p:EnableRuntimePackDownload=$selfContainedValue
         if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
     }
-    dotnet publish LegionBar.csproj --no-restore -c Release -r win-x64 --self-contained $selfContainedValue -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o $outputDirectory
+    dotnet publish LegionBar.csproj --no-restore -c Release -r win-x64 --self-contained $selfContainedValue -p:EnableRuntimePackDownload=$selfContainedValue -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o $outputDirectory
     if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
     foreach ($name in @('README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md')) { Copy-Item -LiteralPath $name -Destination $outputDirectory -Force }
     Copy-Item -LiteralPath 'docs\ICON-DISCLAIMER.md' -Destination $outputDirectory -Force
