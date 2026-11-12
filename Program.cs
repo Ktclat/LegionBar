@@ -9,6 +9,7 @@ internal static class Program
         if (args.Contains("--self-test-layout"))
         {
             var cases = FullscreenDetection.VerifyCases();
+            foreach (var pair in DisplayTargets.VerifyCases()) cases[pair.Key] = pair.Value;
             cases["TaskbarVisibility"] = TaskbarVisibility.VerifyCases();
             var path = args.SkipWhile(x => x != "--output").Skip(1).FirstOrDefault() ?? Path.Combine(AppContext.BaseDirectory, "layout-check.json");
             File.WriteAllText(path, JsonSerializer.Serialize(cases, new JsonSerializerOptions { WriteIndented = true }));
@@ -18,6 +19,11 @@ internal static class Program
         if (args.Contains("--verify-menu"))
         {
             Application.Run(new MonitorForm(verifyUi: true, verifyMenu: true));
+            return;
+        }
+        if (args.Contains("--verify-displays"))
+        {
+            Application.Run(new MonitorForm(verifyUi: true, verifyDisplays: true));
             return;
         }
         if (args.Contains("--diagnose") || args.Contains("--self-test"))

@@ -6,7 +6,8 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.4.1</Version>
+    <Version>1.5.0</Version>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Product>LegionBar</Product>
     <Description>LegionBar</Description>
     <ApplicationIcon>assets/LegionBar.ico</ApplicationIcon>

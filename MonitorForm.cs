@@ -7,7 +7,19 @@ using System.Drawing.Text;
 namespace LegionBar;
 internal sealed class MonitorForm : Form
 {
-    readonly Settings settings = Settings.Load();
+    readonly Settings settings;
+    readonly MonitorForm? host;
+    readonly string? displayDevice;
+    readonly bool verifyDisplays;
+    readonly Dictionary<string, MonitorForm> displayPanels = new();
+    HashSet<string> selectedScreens = new();
+    DateTime nextDisplayScan;
+    Screen? TargetScreen => host == null ? Screen.PrimaryScreen : Screen.AllScreens.FirstOrDefault(s => s.DeviceName == displayDevice);
+    int CurrentOffset
+    {
+        get => settings.DisplayOffsets.TryGetValue(TargetScreen?.DeviceName ?? "", out var value) ? value : settings.Offset;
+        set { if (TargetScreen is { } screen) settings.DisplayOffsets[screen.DeviceName] = value; }
+    }
     readonly bool preview;
     readonly bool verifyUi;
     readonly bool exitAfterVerify;
@@ -37,8 +49,12 @@ internal sealed class MonitorForm : Form
     };
     protected override bool ShowWithoutActivation => !preview;
     protected override CreateParams CreateParams { get { var cp = base.CreateParams; if (!preview) cp.ExStyle |= 0x08080080; return cp; } }
-    public MonitorForm(bool preview = false, bool verifyUi = false, bool exitAfterVerify = true, bool verifyMenu = false)
+    public MonitorForm(bool preview = false, bool verifyUi = false, bool exitAfterVerify = true, bool verifyMenu = false, MonitorForm? host = null, string? displayDevice = null, bool verifyDisplays = false)
     {
+        this.host = host; this.displayDevice = displayDevice; this.verifyDisplays = verifyDisplays;
+        settings = host?.settings ?? Settings.Load();
+        if (verifyDisplays) settings.DisplayMode = "all";
+        if (verifyMenu) settings.DisplayMode = "primary";
         this.preview = preview;
         this.verifyUi = verifyUi;
         this.exitAfterVerify = exitAfterVerify;
@@ -47,26 +63,43 @@ internal sealed class MonitorForm : Form
         AutoScaleMode = AutoScaleMode.Dpi; DoubleBuffered = true; TopMost = true;
         appIcon = CreateIcon(); Icon = appIcon;
         if (preview) { FormBorderStyle = FormBorderStyle.FixedSingle; ShowInTaskbar = true; StartPosition = FormStartPosition.CenterScreen; MaximizeBox = false; MinimizeBox = false; }
-        tray = new NotifyIcon { Icon = appIcon, Text = "LegionBar", Visible = true };
+        tray = new NotifyIcon { Icon = appIcon, Text = "LegionBar", Visible = host == null };
         tray.DoubleClick += (_, _) => ShowDetails();
         tray.MouseUp += (_, e) => { if (e.Button == MouseButtons.Right) ShowTrayMenu(); };
         BuildMenu();
         menu.AutoClose = true;
-        menu.Font = new Font("Microsoft YaHei UI", 9f);
+        menu.Font = SystemTypography.Create(9);
         menu.Padding = new Padding(3, 6, 3, 6);
         menu.Opening += (_, e) => { tip.Hide(this); tip.Active = false; BuildMenu(); e.Cancel = false; };
         menu.Closed += (_, _) => { tip.Active = true; menuTimer.Stop(); };
         menuTimer.Tick += (_, _) => DismissMenuIfOutside();
         MouseEnter += (_, _) => UpdateTooltip();
-        MouseDown += (_, e) => { if (e.Button == MouseButtons.Left && !settings.Locked) { dragging = true; dragStart = Cursor.Position; offsetStart = settings.Offset; Capture = true; } };
-        MouseMove += (_, _) => { if (dragging) { settings.Offset = offsetStart + (int)((Cursor.Position.X - dragStart.X) / (DeviceDpi / 96f)); PositionPanel(); } };
+        MouseDown += (_, e) => { if (e.Button == MouseButtons.Left && !settings.Locked) { dragging = true; dragStart = Cursor.Position; offsetStart = CurrentOffset; Capture = true; } };
+        MouseMove += (_, _) => { if (dragging) { CurrentOffset = offsetStart + (int)((Cursor.Position.X - dragStart.X) / (DeviceDpi / 96f)); PositionPanel(); } };
         MouseUp += (_, e) =>
         {
             if (dragging) { dragging = false; Capture = false; settings.Save(); }
         };
-        MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowDetails(); };
-        positionTimer.Tick += (_, _) => { ApplyTheme(); PositionPanel(); };
-        Shown += (_, _) => { ApplyTheme(); PositionPanel(); if (preview) CenterToScreen(); positionTimer.Start(); StartSampling(); };
+        positionTimer.Tick += (_, _) => { if (host == null) SyncDisplays(); ApplyTheme(); PositionPanel(); };
+        DpiChanged += (_, _) => BeginInvoke(() => { ApplyTheme(); PositionPanel(); RefreshPanel(); });
+        Shown += (_, _) => { if (host == null) SyncDisplays(); ApplyTheme(); PositionPanel(); if (preview) CenterToScreen(); positionTimer.Start(); if (host == null) StartSampling(); };
+    }
+    void SyncDisplays(bool force = false)
+    {
+        if (!force && DateTime.UtcNow < nextDisplayScan) return;
+        nextDisplayScan = DateTime.UtcNow.AddSeconds(1);
+        var screens = Screen.AllScreens;
+        var primary = screens.FirstOrDefault(s => s.Primary) ?? screens.First();
+        selectedScreens = DisplayTargets.Select(settings.DisplayMode, settings.SelectedDisplays, screens.Select(s => s.DeviceName).ToArray(), primary.DeviceName);
+        foreach (var key in displayPanels.Keys.ToArray())
+            if (!selectedScreens.Contains(key) || screens.All(s => s.DeviceName != key) || key == primary.DeviceName) { displayPanels[key].Close(); displayPanels.Remove(key); }
+        foreach (var screen in screens.Where(s => !s.Primary && selectedScreens.Contains(s.DeviceName)))
+        {
+            if (displayPanels.ContainsKey(screen.DeviceName)) continue;
+            var panel = new MonitorForm(host: this, displayDevice: screen.DeviceName);
+            displayPanels[screen.DeviceName] = panel;
+            panel.sample = sample; panel.status = status; panel.Show();
+        }
     }
     void StartSampling()
     {
@@ -86,6 +119,7 @@ internal sealed class MonitorForm : Form
                         sample = next; status = nextStatus;
                         tray.Text = $"LegionBar | C {Display.Percent(next.Cpu)} G {Display.Percent(next.Gpu)} M {Display.Percent(next.Memory)}";
                         RefreshPanel();
+                        foreach (var panel in displayPanels.Values) { panel.sample = next; panel.status = nextStatus; panel.RefreshPanel(); }
                         if (verifyUi && ++sampleCount == 3) VerifyPanel();
                     }); }
                     catch (InvalidOperationException) { break; }
@@ -99,7 +133,7 @@ internal sealed class MonitorForm : Form
     void UpdateTooltip()
     {
         if (sample == null) return;
-        tip.SetToolTip(this, $"CPU  {Display.Percent(sample.Cpu)}   {Display.Temperature(sample.CpuTemperature)}\nGPU  {Display.Percent(sample.Gpu)}   {Display.Temperature(sample.GpuTemperature)}\n内存  {Display.Percent(sample.Memory)}\nCPU 风扇  {Display.Rpm(sample.CpuFanRpm)} RPM    GPU 风扇  {Display.Rpm(sample.GpuFanRpm)} RPM\n上传  {Display.Rate(sample.Upload)}    下载  {Display.Rate(sample.Download)}\n\n{status}\n\n托盘图标右键设置 · 双击查看详情");
+        tip.SetToolTip(this, $"CPU  {Display.Percent(sample.Cpu)}   {Display.Temperature(sample.CpuTemperature)}\nGPU  {Display.Percent(sample.Gpu)}   {Display.Temperature(sample.GpuTemperature)}\n内存  {Display.Percent(sample.Memory)}\nCPU 风扇  {Display.Rpm(sample.CpuFanRpm)} RPM    GPU 风扇  {Display.Rpm(sample.GpuFanRpm)} RPM\n上传  {Display.Rate(sample.Upload)}    下载  {Display.Rate(sample.Download)}\n\n{status}\n\n托盘图标右键设置");
         tray.Text = $"LegionBar | C {Display.Percent(sample.Cpu)} G {Display.Percent(sample.Gpu)} M {Display.Percent(sample.Memory)}";
     }
     void ApplyTheme(bool? systemOverride = null)
@@ -115,8 +149,8 @@ internal sealed class MonitorForm : Form
         muted = panelDark ? Color.FromArgb(166, 176, 192) : Color.FromArgb(77, 87, 102);
         accent = panelDark ? Color.FromArgb(117, 207, 194) : Color.FromArgb(21, 121, 112);
         valueFont?.Dispose(); labelFont?.Dispose();
-        valueFont = new Font("Segoe UI", settings.FontSize, FontStyle.Regular);
-        labelFont = new Font("Segoe UI", Math.Max(7, settings.FontSize - 1), FontStyle.Regular);
+        valueFont = SystemTypography.Create(settings.FontSize);
+        labelFont = SystemTypography.Create(settings.FontSize);
         menu.Renderer = new MenuRenderer(dark);
         StyleMenu(menu);
         RefreshPanel();
@@ -140,11 +174,11 @@ internal sealed class MonitorForm : Form
     {
         if (quitting) return;
         if (preview) { ClientSize = new Size((int)(LogicalWidth * DeviceDpi / 96f * settings.FontSize / 9f), (int)(40 * DeviceDpi / 96f * settings.FontSize / 9f)); return; }
-        var bar = Native.FindWindow("Shell_TrayWnd", null);
+        var screen = TargetScreen;
+        if (screen == null || (host == null && !preview && !selectedScreens.Contains(screen.DeviceName))) { HidePanel(); return; }
+        var bar = Taskbars.Find(screen);
         if (bar == IntPtr.Zero || !Native.GetWindowRect(bar, out var rect)) { HidePanel(); return; }
-        // Shell_TrayWnd belongs to the primary display even when auto-hide moves
-        // most of its rectangle into a display arranged immediately below it.
-        var bounds = rect.Rectangle; var screen = Screen.PrimaryScreen ?? Screen.FromRectangle(bounds);
+        var bounds = rect.Rectangle;
         var fullscreen = FullscreenDetection.IsScreenFullscreen(screen);
         Native.DwmGetWindowAttribute(bar, 14, out var cloaked, 4);
         var scale = DeviceDpi / 96f * settings.FontSize / 9f;
@@ -154,7 +188,7 @@ internal sealed class MonitorForm : Form
         {
             ClientSize = new Size(width, height); HidePanel(); return;
         }
-        var x = Math.Clamp(bounds.Left + (int)(settings.Offset * DeviceDpi / 96f), bounds.Left, Math.Max(bounds.Left, bounds.Right - width));
+        var x = Math.Clamp(bounds.Left + (int)(CurrentOffset * DeviceDpi / 96f), bounds.Left, Math.Max(bounds.Left, bounds.Right - width));
         var y = bounds.Top + (bounds.Height - height) / 2;
         var changed = Bounds != new Rectangle(x, y, width, height) || !Visible;
         if (!menu.Visible) Native.SetWindowPos(Handle, new IntPtr(-1), x, y, width, height, 0x0010 | 0x0040);
@@ -198,7 +232,7 @@ internal sealed class MonitorForm : Form
             if (settings.Compact) width = label == "RAM" ? 40 : 42;
             if (!settings.Compact) { Text(label, labelFont, muted, x, 0, P(31)); Text(bottomLabel, labelFont, muted, x, rowHeight, P(31)); }
             Text(value, valueFont, foreground, x + P(offset), 0, P(width - offset - 5));
-            Text(bottom, valueFont, temperature >= 85 ? Color.FromArgb(239, 147, 89) : muted, x + P(offset), rowHeight, P(width - offset - 5));
+            Text(bottom, valueFont, temperature >= 85 ? Color.FromArgb(239, 147, 89) : foreground, x + P(offset), rowHeight, P(width - offset - 5));
             if (!settings.Compact)
             {
                 using var pen = new Pen(panelDark ? Color.FromArgb(90, 95, 105) : Color.FromArgb(160, 168, 180));
@@ -260,12 +294,37 @@ internal sealed class MonitorForm : Form
         var front = Native.GetForegroundWindow(); Native.GetWindowThreadProcessId(front, out var process);
         if ((pressed != 0 && !InsideOpenMenu(menu, Cursor.Position)) || (front != menuForeground && process != Environment.ProcessId)) menu.Close();
     }
-    void Change(Action action) { action(); settings.Save(); ApplyTheme(); PositionPanel(); RefreshPanel(); }
+    void Change(Action action)
+    {
+        action(); settings.Save(); SyncDisplays(true); ApplyTheme(); PositionPanel(); RefreshPanel();
+        foreach (var panel in displayPanels.Values) { panel.ApplyTheme(); panel.PositionPanel(); panel.RefreshPanel(); }
+    }
     void BuildMenu()
     {
         foreach (ToolStripItem item in menu.Items.Cast<ToolStripItem>().ToArray()) item.Dispose(); menu.Items.Clear();
         menu.Items.Add(new ToolStripMenuItem("LegionBar") { Enabled = false });
         menu.Items.Add(Item("查看详情", ShowDetails)); menu.Items.Add(new ToolStripSeparator());
+        var monitors = new ToolStripMenuItem("显示器");
+        monitors.DropDownItems.Add(Item("自动 · 仅主屏", () => Change(() => settings.DisplayMode = "primary"), settings.DisplayMode == "primary"));
+        monitors.DropDownItems.Add(Item("所有显示器（自动包含新屏幕）", () => Change(() => settings.DisplayMode = "all"), settings.DisplayMode == "all"));
+        monitors.DropDownItems.Add(new ToolStripSeparator());
+        var screens = Screen.AllScreens;
+        var primary = screens.FirstOrDefault(s => s.Primary) ?? screens.First();
+        var chosen = DisplayTargets.Select(settings.DisplayMode, settings.SelectedDisplays, screens.Select(s => s.DeviceName).ToArray(), primary.DeviceName);
+        for (var i = 0; i < screens.Length; i++)
+        {
+            var screen = screens[i];
+            var hasTaskbar = Taskbars.Find(screen) != IntPtr.Zero;
+            var text = $"显示器 {i + 1}{(screen.Primary ? " · 主屏" : "")} · {screen.Bounds.Width}×{screen.Bounds.Height}{(hasTaskbar ? "" : " · 无任务栏")}";
+            monitors.DropDownItems.Add(Item(text, () => Change(() =>
+            {
+                var next = new HashSet<string>(chosen);
+                if (!next.Remove(screen.DeviceName)) next.Add(screen.DeviceName);
+                if (next.Count == 0) return;
+                settings.DisplayMode = "selected"; settings.SelectedDisplays = next.ToList();
+            }), chosen.Contains(screen.DeviceName)));
+        }
+        menu.Items.Add(monitors);
         var display = new ToolStripMenuItem("显示内容");
         void Toggle(string name, Func<bool> read, Action<bool> write)
         {
@@ -294,7 +353,7 @@ internal sealed class MonitorForm : Form
             network.DropDownItems.Add(Item(nic.Name + (nic.OperationalStatus == OperationalStatus.Up ? " · 已连接" : " · 未连接"), () => Change(() => settings.NetworkId = nic.Id), settings.NetworkId == nic.Id)); menu.Items.Add(network);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Item("锁定位置（关闭后可拖动）", () => Change(() => settings.Locked = !settings.Locked), settings.Locked));
-        menu.Items.Add(Item("重置到任务栏左侧", () => Change(() => settings.Offset = 12)));
+        menu.Items.Add(Item("重置到任务栏左侧", () => Change(() => { settings.Offset = 12; settings.DisplayOffsets.Clear(); })));
         menu.Items.Add(Item("开机启动", () => Settings.Startup = !Settings.Startup, Settings.Startup));
         if (!LenovoSensors.IsAdministrator) menu.Items.Add(Item("启用温度和风扇（管理员）", Elevate));
         menu.Items.Add(new ToolStripSeparator());
@@ -322,13 +381,26 @@ internal sealed class MonitorForm : Form
     void ShowAbout()
     {
         using var form = new Form { Text = "LegionBar", ClientSize = new Size(440, 205), StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, Icon = appIcon, BackColor = BackColor, ForeColor = foreground };
-        form.Controls.Add(new Label { Location = new Point(20, 20), Size = new Size(400, 125), Font = new Font("Microsoft YaHei UI", 9), Text = "LegionBar 1.4.1\nCopyright © 2026 Ktclat and contributors\nGNU AGPL v3.0 only · 按现状提供，不提供担保。\n原创黑白图标；非联想官方工具，无厂商背书。\n许可证及第三方声明随便携程序分发。" });
+        form.Controls.Add(new Label { Location = new Point(20, 20), Size = new Size(400, 125), Font = new Font("Microsoft YaHei UI", 9), Text = "LegionBar 1.5.0\nCopyright © 2026 Ktclat and contributors\nGNU AGPL v3.0 only · 按现状提供，不提供担保。\n原创黑白图标；非联想官方工具，无厂商背书。\n许可证及第三方声明随便携程序分发。" });
         var source = new LinkLabel { Text = "源代码与许可证", Location = new Point(20, 155), AutoSize = true, LinkColor = accent };
         source.LinkClicked += (_, _) => Process.Start(new ProcessStartInfo("https://github.com/Ktclat/LegionBar") { UseShellExecute = true });
         form.Controls.Add(source); form.ShowDialog();
     }
     void VerifyPanel()
     {
+        if (verifyDisplays)
+        {
+            var screens = Screen.AllScreens;
+            var panels = new[] { this }.Concat(displayPanels.Values).ToArray();
+            var report = new
+            {
+                ScreenCount = screens.Length, PanelCount = panels.Length, SamplingWorkers = panels.Count(p => p.host == null), TrayIcons = panels.Count(p => p.tray.Visible),
+                Displays = screens.Select(s => new { s.DeviceName, s.Primary, s.Bounds, HasTaskbar = Taskbars.Find(s) != IntPtr.Zero }),
+                Panels = panels.Select(p => new { Device = p.TargetScreen?.DeviceName, p.Visible, p.Bounds, p.DeviceDpi, Font = p.valueFont?.Name, Size = p.valueFont?.Size, HasSample = p.sample != null })
+            };
+            File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "displays-verification.json"), System.Text.Json.JsonSerializer.Serialize(report, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            if (panels.Length != screens.Length) Environment.ExitCode = 6;
+        }
         using var bitmap = RenderPanel(true);
         bitmap.Save(Path.Combine(AppContext.BaseDirectory, "panel-preview.png"));
         var taskbar = Native.FindWindow("Shell_TrayWnd", null); Native.GetWindowRect(taskbar, out var rect);
@@ -392,6 +464,9 @@ internal sealed class MonitorForm : Form
     }
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        quitting = true; cancellation.Cancel(); positionTimer.Stop(); positionTimer.Dispose(); menuTimer.Dispose(); tray.Visible = false; tray.Dispose(); menu.Dispose(); tip.Dispose(); valueFont?.Dispose(); labelFont?.Dispose(); appIcon.Dispose(); base.OnFormClosed(e);
+        quitting = true;
+        foreach (var panel in displayPanels.Values.ToArray()) panel.Close();
+        displayPanels.Clear();
+        cancellation.Cancel(); positionTimer.Stop(); positionTimer.Dispose(); menuTimer.Dispose(); tray.Visible = false; tray.Dispose(); menu.Dispose(); tip.Dispose(); valueFont?.Dispose(); labelFont?.Dispose(); appIcon.Dispose(); base.OnFormClosed(e);
     }
 }

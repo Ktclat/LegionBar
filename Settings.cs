@@ -18,12 +18,16 @@ internal sealed class Settings
     public string Theme { get; set; } = "auto";
     public string NetworkId { get; set; } = "";
     public string FanSource { get; set; } = "cpu";
+    public string DisplayMode { get; set; } = "primary";
+    public List<string> SelectedDisplays { get; set; } = [];
+    public Dictionary<string, int> DisplayOffsets { get; set; } = new();
     public static Settings Load()
     {
         try
         {
             var s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new();
             s.Interval = Math.Clamp(s.Interval, 1000, 5000); s.FontSize = Math.Clamp(s.FontSize, 8, 12);
+            s.SelectedDisplays ??= []; s.DisplayOffsets ??= new();
             if (!(s.Cpu || s.Gpu || s.Memory || s.Network)) s.Cpu = true;
             return s;
         }

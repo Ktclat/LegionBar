@@ -7,6 +7,7 @@ LegionBar source code and original project artwork: Copyright (C) 2026 Ktclat an
 - .NET / Windows Forms: Microsoft and .NET contributors, MIT. https://github.com/dotnet/runtime/blob/main/LICENSE.TXT and https://github.com/dotnet/winforms/blob/main/LICENSE.TXT
 - System.Management 9.0.10 and transitive System.CodeDom 9.0.10: .NET contributors, MIT. https://github.com/dotnet/runtime/blob/v9.0.10/LICENSE.TXT
 - Windows APIs are supplied by the operating system. NVIDIA NVML is loaded from the installed NVIDIA driver; this repository does not distribute NVIDIA binaries or grant rights to them.
+- Segoe UI Variable / Segoe UI and fallback UI fonts are supplied by Windows. No Microsoft font files are distributed with LegionBar.
 
 The default portable build relies on a separately installed .NET Desktop Runtime. The build script includes the upstream .NET MIT license and runtime third-party notice in the output directory; self-contained distributions must retain the notices shipped with their .NET components. Refer to packages.lock.json for the resolved dependency graph.
 
