@@ -6,6 +6,15 @@ internal static class Program
     static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        if (args.Contains("--self-test-layout"))
+        {
+            var cases = FullscreenDetection.VerifyCases();
+            cases["TaskbarVisibility"] = TaskbarVisibility.VerifyCases();
+            var path = args.SkipWhile(x => x != "--output").Skip(1).FirstOrDefault() ?? Path.Combine(AppContext.BaseDirectory, "layout-check.json");
+            File.WriteAllText(path, JsonSerializer.Serialize(cases, new JsonSerializerOptions { WriteIndented = true }));
+            if (cases.Values.Any(passed => !passed)) Environment.ExitCode = 5;
+            return;
+        }
         if (args.Contains("--verify-menu"))
         {
             Application.Run(new MonitorForm(verifyUi: true, verifyMenu: true));

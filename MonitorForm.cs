@@ -145,9 +145,7 @@ internal sealed class MonitorForm : Form
         // Shell_TrayWnd belongs to the primary display even when auto-hide moves
         // most of its rectangle into a display arranged immediately below it.
         var bounds = rect.Rectangle; var screen = Screen.PrimaryScreen ?? Screen.FromRectangle(bounds);
-        var front = Native.GetForegroundWindow();
-        var cls = new System.Text.StringBuilder(256); Native.GetClassName(front, cls, 256);
-        var fullscreen = front != Handle && front != bar && cls.ToString() is not ("Progman" or "WorkerW") && Native.GetWindowRect(front, out var f) && f.Left <= screen.Bounds.Left && f.Top <= screen.Bounds.Top && f.Right >= screen.Bounds.Right && f.Bottom >= screen.Bounds.Bottom;
+        var fullscreen = FullscreenDetection.IsScreenFullscreen(screen);
         Native.DwmGetWindowAttribute(bar, 14, out var cloaked, 4);
         var scale = DeviceDpi / 96f * settings.FontSize / 9f;
         var width = Math.Min((int)(LogicalWidth * scale), bounds.Width);
@@ -163,7 +161,7 @@ internal sealed class MonitorForm : Form
         if (!Visible) Show();
         if (changed) RefreshPanel();
     }
-    void HidePanel() { if (menu.Visible) menu.Close(); if (Visible) Hide(); }
+    void HidePanel() { if (Visible) Hide(); }
     Bitmap RenderPanel(bool transparent)
     {
         var bitmap = new Bitmap(Math.Max(1, ClientSize.Width), Math.Max(1, ClientSize.Height), PixelFormat.Format32bppPArgb);
@@ -324,7 +322,7 @@ internal sealed class MonitorForm : Form
     void ShowAbout()
     {
         using var form = new Form { Text = "LegionBar", ClientSize = new Size(440, 205), StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, Icon = appIcon, BackColor = BackColor, ForeColor = foreground };
-        form.Controls.Add(new Label { Location = new Point(20, 20), Size = new Size(400, 125), Font = new Font("Microsoft YaHei UI", 9), Text = "LegionBar 1.4.0\nCopyright © 2026 Ktclat and contributors\nGNU AGPL v3.0 only · 按现状提供，不提供担保。\n原创黑白图标；非联想官方工具，无厂商背书。\n许可证及第三方声明随便携程序分发。" });
+        form.Controls.Add(new Label { Location = new Point(20, 20), Size = new Size(400, 125), Font = new Font("Microsoft YaHei UI", 9), Text = "LegionBar 1.4.1\nCopyright © 2026 Ktclat and contributors\nGNU AGPL v3.0 only · 按现状提供，不提供担保。\n原创黑白图标；非联想官方工具，无厂商背书。\n许可证及第三方声明随便携程序分发。" });
         var source = new LinkLabel { Text = "源代码与许可证", Location = new Point(20, 155), AutoSize = true, LinkColor = accent };
         source.LinkClicked += (_, _) => Process.Start(new ProcessStartInfo("https://github.com/Ktclat/LegionBar") { UseShellExecute = true });
         form.Controls.Add(source); form.ShowDialog();

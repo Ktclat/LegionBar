@@ -2,6 +2,13 @@ using System.Runtime.InteropServices;
 namespace LegionBar;
 internal static class Native
 {
+    internal delegate bool EnumWindowsCallback(IntPtr window, IntPtr data);
+    [DllImport("user32.dll")] internal static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr data);
+    [DllImport("user32.dll")] internal static extern bool IsIconic(IntPtr window);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] internal static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
+    [DllImport("user32.dll")] internal static extern bool GetClientRect(IntPtr window, out Rect bounds);
+    [DllImport("user32.dll")] internal static extern bool ClientToScreen(IntPtr window, ref Point point);
+    [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")] internal static extern int DwmGetWindowRectAttribute(IntPtr window, int attribute, out Rect bounds, int length);
     [StructLayout(LayoutKind.Sequential)] internal struct Point(int x, int y) { public int X = x, Y = y; }
     [StructLayout(LayoutKind.Sequential)] internal struct Size(int width, int height) { public int Width = width, Height = height; }
     [StructLayout(LayoutKind.Sequential, Pack = 1)] internal struct BlendFunction { public byte Operation, Flags, Alpha, Format; }

@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
     <Product>LegionBar</Product>
     <Description>LegionBar</Description>
     <ApplicationIcon>assets/LegionBar.ico</ApplicationIcon>
