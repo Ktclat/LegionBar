@@ -6,6 +6,12 @@ internal static class Program
     static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        if (args.Contains("--benchmark-ui"))
+        {
+            PerformanceProbe.Enabled = true;
+            Application.Run(new MonitorForm(benchmark: true));
+            return;
+        }
         if (args.Contains("--self-test-layout"))
         {
             var cases = FullscreenDetection.VerifyCases();

@@ -5,25 +5,32 @@ internal readonly record struct ScreenWindow(Rectangle Frame, Rectangle Client, 
 internal static class FullscreenDetection
 {
     public static bool IsScreenFullscreen(Screen screen)
+        => HasExposedFullscreen(Capture(), screen.Bounds, screen.WorkingArea);
+
+    public static List<ScreenWindow> Capture(Action<IntPtr, string, Rectangle>? observe = null)
     {
-        var coverage = new ScreenCoverage(screen.Bounds, screen.WorkingArea);
+        var windows = new List<ScreenWindow>();
         Native.EnumWindows((window, _) =>
         {
             Native.GetWindowThreadProcessId(window, out var processId);
-            if (processId == Environment.ProcessId || !Native.IsWindowVisible(window) || Native.IsIconic(window)) return true;
+            if (processId == Environment.ProcessId) return true;
             var name = new System.Text.StringBuilder(256); Native.GetClassName(window, name, 256);
+            if (!Native.GetWindowRect(window, out var frame)) return true;
+            observe?.Invoke(window, name.ToString(), frame.Rectangle);
+            if (!Native.IsWindowVisible(window) || Native.IsIconic(window)) return true;
             if (name.ToString() is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd") return true;
             var extendedStyle = Native.GetWindowLongPtr(window, -20).ToInt64();
             if ((extendedStyle & 0x80) != 0) return true; // Tool windows and floating palettes.
             Native.DwmGetWindowAttribute(window, 14, out var cloaked, 4);
-            if (cloaked != 0 || !Native.GetWindowRect(window, out var frame) || !frame.Rectangle.IntersectsWith(screen.Bounds)) return true;
+            if (cloaked != 0) return true;
             if (Native.DwmGetWindowRectAttribute(window, 9, out var visibleFrame, 16) == 0) frame = visibleFrame;
             if (!Native.GetClientRect(window, out var client)) return true;
             var origin = new Native.Point(0, 0);
             if (!Native.ClientToScreen(window, ref origin)) return true;
-            return coverage.Visit(new(frame.Rectangle, new Rectangle(origin.X, origin.Y, client.Right - client.Left, client.Bottom - client.Top), (extendedStyle & 0x80000) == 0));
+            windows.Add(new(frame.Rectangle, new Rectangle(origin.X, origin.Y, client.Right - client.Left, client.Bottom - client.Top), (extendedStyle & 0x80000) == 0));
+            return true;
         }, IntPtr.Zero);
-        return coverage.Fullscreen;
+        return windows;
     }
 
     // EnumWindows supplies front-to-back Z order. Focus can be on another display.

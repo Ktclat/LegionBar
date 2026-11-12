@@ -2,8 +2,12 @@ using System.Runtime.InteropServices;
 namespace LegionBar;
 internal static class Native
 {
+    internal delegate void WinEventCallback(IntPtr hook, uint eventType, IntPtr window, int objectId, int childId, uint thread, uint time);
+    [DllImport("user32.dll")] internal static extern IntPtr SetWinEventHook(uint first, uint last, IntPtr module, WinEventCallback callback, uint process, uint thread, uint flags);
+    [DllImport("user32.dll")] internal static extern bool UnhookWinEvent(IntPtr hook);
     internal delegate bool EnumWindowsCallback(IntPtr window, IntPtr data);
-    [DllImport("user32.dll")] internal static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr data);
+    [DllImport("user32.dll", EntryPoint = "EnumWindows")] static extern bool EnumWindowsCore(EnumWindowsCallback callback, IntPtr data);
+    internal static bool EnumWindows(EnumWindowsCallback callback, IntPtr data) { PerformanceProbe.Count("Desktop.EnumWindows"); return EnumWindowsCore(callback, data); }
     [DllImport("user32.dll")] internal static extern bool IsIconic(IntPtr window);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] internal static extern IntPtr GetWindowLongPtr(IntPtr window, int index);
     [DllImport("user32.dll")] internal static extern bool GetClientRect(IntPtr window, out Rect bounds);

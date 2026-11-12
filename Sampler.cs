@@ -8,13 +8,16 @@ internal sealed class Sampler : IDisposable
     long idle, kernel, user;
     IntPtr query, counter, gpu;
     bool nvml;
+    readonly NetworkInventory inventory;
+    readonly bool ownsInventory;
     readonly LenovoSensors legion = new();
     string sensorStatus = "未初始化", gpuStatus = "未初始化";
     readonly Dictionary<string, (long sent, long received, long time)> previous = new();
     public string NetworkId { get; set; } = "";
     public string Status => $"{sensorStatus}\n权限：{(LenovoSensors.IsAdministrator ? "管理员" : "普通用户")}\nGPU：{gpuStatus}\n网络：{(string.IsNullOrEmpty(NetworkId) ? "活动以太网 / Wi-Fi 合计" : NetworkId)}\nCPU：Windows Processor Utility（不可用时用系统时间）";
-    public Sampler()
+    public Sampler(NetworkInventory? inventory = null)
     {
+        ownsInventory = inventory == null; this.inventory = inventory ?? new NetworkInventory();
         Native.GetSystemTimes(out idle, out kernel, out user);
         if (Native.PdhOpenQuery(null, IntPtr.Zero, out query) == 0)
         {
@@ -53,13 +56,14 @@ internal sealed class Sampler : IDisposable
     (double?, double?) ReadNetwork()
     {
         double up = 0, down = 0; var seen = new HashSet<string>(); var available = false;
-        foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+        inventory.RefreshIfDue();
+        foreach (var nic in inventory.Snapshot)
         {
-            if (nic.OperationalStatus != OperationalStatus.Up || (NetworkId != "" ? nic.Id != NetworkId : nic.NetworkInterfaceType is not (NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211))) continue;
+            if (nic.Status != OperationalStatus.Up || (NetworkId != "" ? nic.Id != NetworkId : nic.Type is not (NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211))) continue;
             if (NetworkId == "" && (nic.Description.Contains("Virtual", StringComparison.OrdinalIgnoreCase) || nic.Description.Contains("TAP", StringComparison.OrdinalIgnoreCase) || nic.Description.Contains("VPN", StringComparison.OrdinalIgnoreCase))) continue;
             try
             {
-                var stats = nic.GetIPStatistics(); var now = Stopwatch.GetTimestamp(); seen.Add(nic.Id); available = true;
+                var stats = nic.Adapter.GetIPStatistics(); var now = Stopwatch.GetTimestamp(); seen.Add(nic.Id); available = true;
                 if (previous.TryGetValue(nic.Id, out var old))
                 {
                     var seconds = (now - old.time) / (double)Stopwatch.Frequency;
@@ -72,5 +76,5 @@ internal sealed class Sampler : IDisposable
         foreach (var key in previous.Keys.Where(k => !seen.Contains(k)).ToArray()) previous.Remove(key);
         return available ? (up, down) : (null, null);
     }
-    public void Dispose() { legion.Dispose(); if (query != IntPtr.Zero) Native.PdhCloseQuery(query); if (nvml) Native.nvmlShutdown(); }
+    public void Dispose() { if (ownsInventory) inventory.Dispose(); legion.Dispose(); if (query != IntPtr.Zero) Native.PdhCloseQuery(query); if (nvml) Native.nvmlShutdown(); }
 }

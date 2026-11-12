@@ -10,7 +10,8 @@ internal sealed class LenovoSensors : IDisposable
 {
     readonly Endpoint fan = new("LENOVO_FAN_METHOD");
     readonly Endpoint gameZone = new("LENOVO_GAMEZONE_DATA");
-    public static bool IsAdministrator => new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+    public static bool IsAdministrator { get; } = GetAdministrator();
+    static bool GetAdministrator() { using var identity = WindowsIdentity.GetCurrent(); return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator); }
 
     public LegionReading Read()
     {
