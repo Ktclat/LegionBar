@@ -16,6 +16,7 @@ try {
     Copy-Item -Path 'licenses\*' -Destination $outputDirectory -Force
     $digest = (Get-FileHash -LiteralPath (Join-Path $outputDirectory 'LegionBar.exe') -Algorithm SHA256).Hash
     "$digest  LegionBar.exe" | Set-Content -LiteralPath (Join-Path $outputDirectory 'SHA256SUMS.txt') -Encoding ascii
-    Compress-Archive -Path (Join-Path $outputDirectory '*') -DestinationPath (Join-Path $projectDirectory 'artifacts\LegionBar-win-x64.zip') -Force
+    $packageFiles = @('LegionBar.exe', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'ICON-DISCLAIMER.md', 'DOTNET-LICENSE.txt', 'DOTNET-THIRD-PARTY-NOTICES.txt', 'SHA256SUMS.txt') | ForEach-Object { Join-Path $outputDirectory $_ }
+    Compress-Archive -LiteralPath $packageFiles -DestinationPath (Join-Path $projectDirectory 'artifacts\LegionBar-win-x64.zip') -Force
     Write-Output "Build complete: $outputDirectory"
 } finally { Pop-Location }
