@@ -6,6 +6,33 @@ internal static class Program
     static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        if (args.Contains("--startup-config") || args.Contains("--startup-status") || args.Contains("--self-test-startup") || args.Contains("--run-startup"))
+        {
+            try
+            {
+                var expectedSid = args.SkipWhile(x => x != "--expected-sid").Skip(1).FirstOrDefault();
+                if (expectedSid != null && expectedSid != StartupRegistration.UserSid) throw new UnauthorizedAccessException("管理员账户与当前登录账户不一致，未修改开机启动。");
+                var backend = new StartupRegistration();
+                object result;
+                if (args.Contains("--self-test-startup")) result = StartupRegistration.VerifyIntegration();
+                else if (args.Contains("--run-startup")) { backend.Run(); return; }
+                else
+                {
+                    if (args.Contains("--startup-config"))
+                    {
+                        var option = args.SkipWhile(x => x != "--startup-config").Skip(1).FirstOrDefault();
+                        if (option is not ("enable" or "disable")) throw new ArgumentException("开机启动选项必须为 enable 或 disable。");
+                        backend.SetEnabled(option == "enable");
+                        if (option == "enable" && args.Contains("--start-after-enable")) backend.Run();
+                    }
+                    result = backend.Read();
+                }
+                var output = args.SkipWhile(x => x != "--output").Skip(1).FirstOrDefault();
+                if (output != null || !args.Contains("--startup-config")) File.WriteAllText(output ?? Path.Combine(AppContext.BaseDirectory, "startup-status.json"), JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch (Exception error) { Log(error); Environment.ExitCode = 8; }
+            return;
+        }
         if (args.Contains("--benchmark-ui"))
         {
             PerformanceProbe.Enabled = true;
@@ -16,6 +43,7 @@ internal static class Program
         {
             var cases = FullscreenDetection.VerifyCases();
             foreach (var pair in DisplayTargets.VerifyCases()) cases[pair.Key] = pair.Value;
+            foreach (var pair in StartupRegistration.VerifyXmlCases()) cases[pair.Key] = pair.Value;
             cases["TaskbarVisibility"] = TaskbarVisibility.VerifyCases();
             var path = args.SkipWhile(x => x != "--output").Skip(1).FirstOrDefault() ?? Path.Combine(AppContext.BaseDirectory, "layout-check.json");
             File.WriteAllText(path, JsonSerializer.Serialize(cases, new JsonSerializerOptions { WriteIndented = true }));
@@ -50,7 +78,7 @@ internal static class Program
         using (mutex)
         {
             bool acquired;
-            try { acquired = mutex.WaitOne(args.Contains("--handoff") ? TimeSpan.FromSeconds(10) : TimeSpan.Zero); }
+            try { acquired = mutex.WaitOne(args.Contains("--handoff") || args.Contains("--startup") ? TimeSpan.FromSeconds(10) : TimeSpan.Zero); }
             catch (AbandonedMutexException) { acquired = true; }
             if (!acquired) return;
             try

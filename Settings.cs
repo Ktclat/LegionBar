@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Microsoft.Win32;
 namespace LegionBar;
 internal sealed class Settings
 {
@@ -37,10 +36,5 @@ internal sealed class Settings
     {
         try { Directory.CreateDirectory(DirectoryPath); var temp = FilePath + ".tmp"; File.WriteAllText(temp, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true })); File.Move(temp, FilePath, true); }
         catch (Exception e) { Program.Log(e); }
-    }
-    public static bool Startup
-    {
-        get { using var k = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); return k?.GetValue("LegionBar") != null; }
-        set { using var k = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); if (value) k.SetValue("LegionBar", $"\"{Environment.ProcessPath}\""); else k.DeleteValue("LegionBar", false); }
     }
 }

@@ -12,6 +12,8 @@ internal sealed class MonitorForm : Form
     readonly bool benchmark;
     readonly DesktopState desktop;
     readonly NetworkInventory inventory;
+    readonly StartupManager startup;
+    bool changingStartup;
     record PendingSample(Sample Sample, string Status);
     PendingSample? pendingSample;
     bool menuDirty = true;
@@ -65,6 +67,7 @@ internal sealed class MonitorForm : Form
         this.host = host; this.displayDevice = displayDevice; this.verifyDisplays = verifyDisplays;
         desktop = host?.desktop ?? new DesktopState();
         inventory = host?.inventory ?? new NetworkInventory();
+        startup = host?.startup ?? new StartupManager();
         this.benchmark = benchmark;
         settings = host?.settings ?? Settings.Load();
         if (verifyDisplays) settings.DisplayMode = "all";
@@ -110,12 +113,38 @@ internal sealed class MonitorForm : Form
     {
         using var measurement = PerformanceProbe.Measure("Menu.Prepare");
         if (menuDirty || menuNetworkVersion != inventory.Version || menuDesktopVersion != desktop.MenuVersion) BuildMenu();
-        if (startupItem != null) startupItem.Checked = Settings.Startup;
+        startup.RefreshIfDue(); UpdateStartupItem();
+    }
+    void UpdateStartupItem()
+    {
+        if (startupItem == null) return;
+        var state = startup.State;
+        startupItem.Checked = state.Enabled;
+        startupItem.Enabled = state.Known && !changingStartup;
+        var title = changingStartup ? "开机启动（正在更新…）" : !state.Known ? (state.Error == null ? "开机启动（读取中…）" : "开机启动（暂不可用）") : state.Legacy || state.NeedsRepair ? "开机启动（点击升级／修复）" : "开机启动（管理员）";
+        if (startupItem.Text != title) startupItem.Text = title;
+        startupItem.ToolTipText = state.Error ?? "当前用户登录后延迟 10 秒，以最高权限运行；允许电池供电。关闭时移除计划任务和旧启动项。";
+    }
+    async void ToggleStartup()
+    {
+        if (changingStartup || !startup.State.Known) return;
+        var state = startup.State;
+        var enabled = !state.Enabled || state.Legacy || state.NeedsRepair;
+        changingStartup = true; UpdateStartupItem();
+        try
+        {
+            var restart = await startup.SetEnabledAsync(enabled);
+            if (restart && !quitting) Close();
+        }
+        catch (System.ComponentModel.Win32Exception error) when (error.NativeErrorCode == 1223) { }
+        catch (Exception error) { Program.Log(error); if (!quitting) MessageBox.Show(error.Message, "LegionBar"); }
+        finally { changingStartup = false; startup.RefreshIfDue(true); if (!quitting) UpdateStartupItem(); }
     }
     void Pulse()
     {
         using var measurement = PerformanceProbe.Measure("UI.Pulse");
         desktop.Refresh(); inventory.RefreshIfDue(); SyncDisplays();
+        UpdateStartupItem();
         ApplyTheme(); PositionPanel();
         foreach (var panel in displayPanels.Values) { panel.ApplyTheme(); panel.PositionPanel(); }
         if (Interlocked.Exchange(ref pendingSample, null) is { } next)
@@ -428,8 +457,9 @@ internal sealed class MonitorForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Item("锁定位置（关闭后可拖动）", () => Change(() => settings.Locked = !settings.Locked), settings.Locked));
         menu.Items.Add(Item("重置到任务栏左侧", () => Change(() => { settings.Offset = 12; settings.DisplayOffsets.Clear(); })));
-        startupItem = Item("开机启动", () => { Settings.Startup = !Settings.Startup; menuDirty = true; }, Settings.Startup);
+        startupItem = Item("开机启动（管理员）", ToggleStartup);
         menu.Items.Add(startupItem);
+        UpdateStartupItem();
         if (!LenovoSensors.IsAdministrator) menu.Items.Add(Item("启用温度和风扇（管理员）", Elevate));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Item("关于 LegionBar", ShowAbout));
@@ -457,7 +487,7 @@ internal sealed class MonitorForm : Form
     void ShowAbout()
     {
         using var form = new Form { Text = "LegionBar", ClientSize = new Size(440, 205), StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, Icon = appIcon, BackColor = BackColor, ForeColor = foreground };
-        form.Controls.Add(new Label { Location = new Point(20, 20), Size = new Size(400, 125), Font = new Font("Microsoft YaHei UI", 9), Text = "LegionBar 1.5.1\nCopyright © 2026 Ktclat and contributors\nGNU AGPL v3.0 only · 按现状提供，不提供担保。\n原创黑白图标；非联想官方工具，无厂商背书。\n许可证及第三方声明随便携程序分发。" });
+        form.Controls.Add(new Label { Location = new Point(20, 20), Size = new Size(400, 125), Font = new Font("Microsoft YaHei UI", 9), Text = "LegionBar 1.6.0\nCopyright © 2026 Ktclat and contributors\nGNU AGPL v3.0 only · 按现状提供，不提供担保。\n原创黑白图标；非联想官方工具，无厂商背书。\n许可证及第三方声明随便携程序分发。" });
         var source = new LinkLabel { Text = "源代码与许可证", Location = new Point(20, 155), AutoSize = true, LinkColor = accent };
         source.LinkClicked += (_, _) => Process.Start(new ProcessStartInfo("https://github.com/Ktclat/LegionBar") { UseShellExecute = true });
         form.Controls.Add(source); form.ShowDialog();
@@ -544,7 +574,7 @@ internal sealed class MonitorForm : Form
         foreach (var panel in displayPanels.Values.ToArray()) panel.Close();
         displayPanels.Clear();
         cancellation.Cancel(); positionTimer.Stop(); positionTimer.Dispose(); menuTimer?.Dispose(); tray?.Dispose(); menu?.Dispose(); menuFont?.Dispose(); tip.Dispose(); valueFont?.Dispose(); labelFont?.Dispose();
-        if (host == null) { desktop.Dispose(); inventory.Dispose(); appIcon.Dispose(); }
+        if (host == null) { desktop.Dispose(); inventory.Dispose(); startup.Dispose(); appIcon.Dispose(); }
         base.OnFormClosed(e);
     }
 }
